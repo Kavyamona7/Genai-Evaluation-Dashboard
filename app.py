@@ -1,7 +1,11 @@
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
 from services.evaluation_service import run_single_evaluation
+from services.evaluator import update_result_quality_scores
+from services.ranker import add_overall_score
+from services.recommender import get_recommendations
 
 # ---------------------------
 # Page config
@@ -60,21 +64,6 @@ st.markdown("""
 # ---------------------------
 if "results" not in st.session_state:
     st.session_state.results = []
-
-# ---------------------------
-# Helper functions
-# ---------------------------
-def generate_summary_insight(df: pd.DataFrame) -> dict:
-    fastest_model = df.loc[df["latency_seconds"].idxmin(), "model"]
-    cheapest_model = df.loc[df["estimated_cost_usd"].idxmin(), "model"]
-    best_quality_model = df.loc[df["quality_score"].idxmax(), "model"]
-
-    return {
-        "fastest": fastest_model,
-        "cheapest": cheapest_model,
-        "best_quality": best_quality_model
-    }
-
 
 def add_result(result: dict) -> None:
     st.session_state.results.append(result)
@@ -185,16 +174,14 @@ if run_clicked:
 # ---------------------------
 if st.session_state.results:
     df = pd.DataFrame(st.session_state.results)
+    for i in range(len(st.session_state.results)):
+        st.session_state.results[i] = update_result_quality_scores(
+            st.session_state.results[i]
+        )
 
-    # recompute average quality from dimensions
-    if {"relevance_score", "clarity_score", "completeness_score"}.issubset(df.columns):
-        df["quality_score"] = (
-            df["relevance_score"] + df["clarity_score"] + df["completeness_score"]
-        ) / 3
-        df["quality_score"] = df["quality_score"].round(2)
-
-        for i in range(len(st.session_state.results)):
-            st.session_state.results[i]["quality_score"] = float(df.iloc[i]["quality_score"])
+    df = pd.DataFrame(st.session_state.results)
+    df = add_overall_score(df)
+    recommendations = get_recommendations(df)
 
     total_models = len(df)
     avg_latency = round(df["latency_seconds"].mean(), 2)
@@ -209,13 +196,16 @@ if st.session_state.results:
     m3.metric("Avg Quality", avg_quality)
     m4.metric("Total Est. Cost ($)", total_cost)
 
-    insights = generate_summary_insight(df)
-
-    st.markdown("## 🏆 Quick Insights")
-    i1, i2, i3 = st.columns(3)
-    i1.success(f"Fastest: {insights['fastest']}")
-    i2.success(f"Cheapest: {insights['cheapest']}")
-    i3.success(f"Best Quality: {insights['best_quality']}")
+    st.markdown("## 🏆 Recommendations")
+    r1, r2, r3, r4 = st.columns(4)
+    r1.success(f"Fastest: {recommendations['fastest']}")
+    r2.success(f"Cheapest: {recommendations['cheapest']}")
+    r3.success(f"Best Quality: {recommendations['best_quality']}")
+    r4.success(f"Best Overall: {recommendations['best_overall']}")
+    st.info(
+        "Best Overall model balances quality, latency, and cost based on weighted scoring. "
+        "Use Fastest for real-time apps, Cheapest for scale, and Best Quality for critical outputs."
+    )
 
     st.markdown("## 🧾 Model Cards")
     card_cols = st.columns(min(3, len(df)))
@@ -303,6 +293,50 @@ if st.session_state.results:
         )
         st.plotly_chart(fig_words, use_container_width=True)
 
+    st.markdown("## 📊 Normalized Comparison")
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=df["model"],
+        y=df["normalized_quality"],
+        name="Quality",
+    ))
+
+    fig.add_trace(go.Bar(
+        x=df["model"],
+        y=df["normalized_latency"],
+        name="Speed",
+    ))
+
+    fig.add_trace(go.Bar(
+        x=df["model"],
+        y=df["normalized_cost"],
+        name="Cost Efficiency",
+    ))
+
+    fig.update_layout(
+        barmode="group",
+        title="Normalized Model Comparison",
+        yaxis_title="Score (0-1)",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("## ⚖️ Trade-off Analysis")
+
+    fig_tradeoff = px.scatter(
+        df,
+        x="latency_seconds",
+        y="quality_score",
+        size="estimated_cost_usd",
+        color="model",
+        title="Latency vs Quality (Bubble size = Cost)",
+        hover_data=["overall_score"]
+    )
+
+    st.plotly_chart(fig_tradeoff, use_container_width=True)
+
     st.markdown("## 🧠 Detailed Responses")
 
     tabs = st.tabs(df["model"].tolist())
@@ -346,15 +380,35 @@ if st.session_state.results:
                 )
                 st.session_state.results[i]["completeness_score"] = completeness
 
-            avg_score = round((relevance + clarity + completeness) / 3, 2)
+            st.session_state.results[i] = update_result_quality_scores(
+                st.session_state.results[i]
+            )
+
+            avg_score = st.session_state.results[i]["quality_score"]
             st.info(f"Average quality score for {row['model']}: {avg_score} / 5")
 
     # refresh dataframe after scoring
     df = pd.DataFrame(st.session_state.results)
-    df["quality_score"] = (
-        df["relevance_score"] + df["clarity_score"] + df["completeness_score"]
-    ) / 3
-    df["quality_score"] = df["quality_score"].round(2)
+    for i in range(len(st.session_state.results)):
+        st.session_state.results[i] = update_result_quality_scores(
+            st.session_state.results[i]
+        )
+    df = pd.DataFrame(st.session_state.results)
+    df = add_overall_score(df)
+    recommendations = get_recommendations(df)
+
+    fig_overall = px.bar(
+        df,
+        x="model",
+        y="overall_score",
+        title="Overall Score by Model",
+        text="overall_score",
+    )
+    fig_overall.update_layout(
+        xaxis_title="Model",
+        yaxis_title="Overall Score",
+    )
+    st.plotly_chart(fig_overall, use_container_width=True)
 
     st.markdown("## 📋 Results Table")
     st.dataframe(
@@ -366,7 +420,8 @@ if st.session_state.results:
             "relevance_score",
             "clarity_score",
             "completeness_score",
-            "quality_score"
+            "quality_score",
+            "overall_score",
         ]],
         use_container_width=True
     )
