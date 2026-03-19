@@ -6,6 +6,7 @@ from services.evaluation_service import run_single_evaluation
 from services.evaluator import update_result_quality_scores
 from services.ranker import add_overall_score
 from services.recommender import get_recommendations
+from services.pdf_report import build_evaluation_pdf
 
 # ---------------------------
 # Page config
@@ -187,6 +188,12 @@ if st.session_state.results:
     avg_latency = round(df["latency_seconds"].mean(), 2)
     avg_quality = round(df["quality_score"].mean(), 2)
     total_cost = round(df["estimated_cost_usd"].sum(), 4)
+    pdf_summary = {
+        "models_tested": total_models,
+        "avg_latency": avg_latency,
+        "avg_quality": avg_quality,
+        "total_cost": total_cost,
+    }
 
     st.markdown("## 📊 Overview")
 
@@ -433,6 +440,20 @@ if st.session_state.results:
         data=csv,
         file_name="llm_evaluation_results.csv",
         mime="text/csv"
+    )
+
+    pdf_bytes = build_evaluation_pdf(
+        prompt=prompt,
+        results=df.to_dict(orient="records"),
+        recommendations=recommendations,
+        summary=pdf_summary,
+    )
+
+    st.download_button(
+        label="⬇️ Download Results as PDF",
+        data=pdf_bytes,
+        file_name="llm_evaluation_report.pdf",
+        mime="application/pdf",
     )
 
 else:
