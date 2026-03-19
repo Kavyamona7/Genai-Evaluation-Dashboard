@@ -293,9 +293,3 @@ This project demonstrates the ability to:
 - Develop interactive data-driven dashboards
 
 It serves as a strong foundation for advanced work in **Generative AI, model evaluation, and AI system design**.
-
-## 16. Interview Explanation (Optional Section)
-
-This project can be described as:
-
-"I developed an LLM evaluation dashboard that compares multiple language models across latency, cost, and quality. The system uses a layered architecture separating UI, processing, and evaluation logic. It supports structured manual scoring and visual analytics, and is designed to be extended with automated evaluation using LLM-as-a-judge."
